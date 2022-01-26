@@ -38,7 +38,7 @@ enum TxRowType {
 }
 
 /// A domain transaction. All transaction types have a client and a transaction ID.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Tx {
     tx_type: TxType,
     client_id: u16,
@@ -46,7 +46,7 @@ struct Tx {
 }
 
 /// Possible transaction types. Deposit and Withdrawal have an amount.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum TxType {
     Deposit(BigDecimal),
     Withdrawal(BigDecimal),
@@ -120,7 +120,7 @@ struct State {
 }
 
 /// A domain account.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 struct Account {
     available: BigDecimal,
     held: BigDecimal,
@@ -241,5 +241,267 @@ fn print_accounts(accounts: HashMap<u16, Account>) {
     ) in accounts
     {
         println!("{client_id}, {available:.4}, {held:.4}, {total:.4}, {locked}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_into_tx_ok_deposit() {
+        let tx_row = Ok(TxRow {
+            tx_row_type: TxRowType::Deposit,
+            client_id: 42,
+            tx_id: 666,
+            amount: Some("1.2345".to_string()),
+        });
+        let tx = into_tx(tx_row);
+        assert!(tx.is_some());
+        let tx = tx.unwrap();
+        assert_eq!(
+            tx,
+            Tx {
+                tx_type: TxType::Deposit(amount_12345()),
+                client_id: 42,
+                tx_id: 666
+            }
+        )
+    }
+
+    #[test]
+    fn test_into_tx_ok_withdrawal() {
+        let tx_row = Ok(TxRow {
+            tx_row_type: TxRowType::Withdrawal,
+            client_id: 42,
+            tx_id: 666,
+            amount: Some("1.2345".to_string()),
+        });
+        let tx = into_tx(tx_row);
+        assert!(tx.is_some());
+        let tx = tx.unwrap();
+        assert_eq!(
+            tx,
+            Tx {
+                tx_type: TxType::Withdrawal(amount_12345()),
+                client_id: 42,
+                tx_id: 666
+            }
+        )
+    }
+
+    #[test]
+    fn test_into_tx_err_amount_format() {
+        let tx_row = Ok(TxRow {
+            tx_row_type: TxRowType::Deposit,
+            client_id: 42,
+            tx_id: 666,
+            amount: Some("INVALID".to_string()),
+        });
+        let tx = into_tx(tx_row);
+        assert!(tx.is_none());
+    }
+
+    #[test]
+    fn test_into_tx_err_amount_missing() {
+        let tx_row = Ok(TxRow {
+            tx_row_type: TxRowType::Withdrawal,
+            client_id: 42,
+            tx_id: 666,
+            amount: None,
+        });
+        let tx = into_tx(tx_row);
+        assert!(tx.is_none());
+    }
+
+    #[test]
+    fn test_into_tx_err() {
+        let tx_row = Err(anyhow!("SOME ERROR"));
+        let tx = into_tx(tx_row);
+        assert!(tx.is_none());
+    }
+
+    #[test]
+    fn test_run_tx_deposit() {
+        let state = State::default();
+        let tx = Tx {
+            tx_type: TxType::Deposit(amount_12345()),
+            client_id: 42,
+            tx_id: 666,
+        };
+        let State { accounts, amounts } = run_tx(state, tx);
+        assert_eq!(
+            accounts.get(&42),
+            Some(&Account {
+                available: amount_12345(),
+                held: BigDecimal::default(),
+                total: amount_12345(),
+                locked: false,
+            })
+        );
+        assert_eq!(amounts.get(&666), Some(&amount_12345()));
+    }
+
+    #[test]
+    fn test_run_tx_withdrawal_insufficient_available() {
+        let state = State::default();
+        let tx = Tx {
+            tx_type: TxType::Withdrawal(amount_12345()),
+            client_id: 42,
+            tx_id: 666,
+        };
+        let State { accounts, amounts } = run_tx(state, tx);
+        assert_eq!(
+            accounts.get(&42),
+            Some(&Account {
+                available: BigDecimal::default(),
+                held: BigDecimal::default(),
+                total: BigDecimal::default(),
+                locked: false,
+            })
+        );
+        assert_eq!(amounts.get(&666), None);
+    }
+
+    #[test]
+    fn test_run_tx_withdrawal() {
+        let mut state = State::default();
+        state.accounts.insert(
+            42,
+            Account {
+                available: amount_12345(),
+                held: BigDecimal::default(),
+                total: amount_12345(),
+                locked: false,
+            },
+        );
+        state.amounts.insert(666, amount_12345());
+
+        let tx = Tx {
+            tx_type: TxType::Withdrawal(BigDecimal::from_str("0.2345").unwrap()),
+            client_id: 42,
+            tx_id: 999,
+        };
+        let State { accounts, amounts } = run_tx(state, tx);
+        assert_eq!(
+            accounts.get(&42),
+            Some(&Account {
+                available: BigDecimal::from_str("1").unwrap(),
+                held: BigDecimal::default(),
+                total: BigDecimal::from_str("1").unwrap(),
+                locked: false,
+            })
+        );
+        assert_eq!(amounts.get(&666), Some(&amount_12345()));
+        assert_eq!(
+            amounts.get(&999),
+            Some(&BigDecimal::from_str("-0.2345").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_run_tx_dispute() {
+        let mut state = State::default();
+        state.accounts.insert(
+            42,
+            Account {
+                available: amount_12345(),
+                held: BigDecimal::default(),
+                total: amount_12345(),
+                locked: false,
+            },
+        );
+        state.amounts.insert(666, amount_12345());
+
+        let tx = Tx {
+            tx_type: TxType::Dispute,
+            client_id: 42,
+            tx_id: 666,
+        };
+        let State {
+            accounts,
+            amounts: _,
+        } = run_tx(state, tx);
+        assert_eq!(
+            accounts.get(&42),
+            Some(&Account {
+                available: BigDecimal::default(),
+                held: amount_12345(),
+                total: amount_12345(),
+                locked: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_tx_resolve() {
+        let mut state = State::default();
+        state.accounts.insert(
+            42,
+            Account {
+                available: BigDecimal::default(),
+                held: amount_12345(),
+                total: amount_12345(),
+                locked: false,
+            },
+        );
+        state.amounts.insert(666, amount_12345());
+
+        let tx = Tx {
+            tx_type: TxType::Resolve,
+            client_id: 42,
+            tx_id: 666,
+        };
+        let State {
+            accounts,
+            amounts: _,
+        } = run_tx(state, tx);
+        assert_eq!(
+            accounts.get(&42),
+            Some(&Account {
+                available: amount_12345(),
+                held: BigDecimal::default(),
+                total: amount_12345(),
+                locked: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_tx_chargeback() {
+        let mut state = State::default();
+        state.accounts.insert(
+            42,
+            Account {
+                available: BigDecimal::default(),
+                held: amount_12345(),
+                total: amount_12345(),
+                locked: false,
+            },
+        );
+        state.amounts.insert(666, amount_12345());
+
+        let tx = Tx {
+            tx_type: TxType::Chargeback,
+            client_id: 42,
+            tx_id: 666,
+        };
+        let State {
+            accounts,
+            amounts: _,
+        } = run_tx(state, tx);
+        assert_eq!(
+            accounts.get(&42),
+            Some(&Account {
+                available: BigDecimal::default(),
+                held: BigDecimal::default(),
+                total: BigDecimal::default(),
+                locked: true,
+            })
+        );
+    }
+
+    fn amount_12345() -> BigDecimal {
+        BigDecimal::from_str("1.2345").unwrap()
     }
 }
