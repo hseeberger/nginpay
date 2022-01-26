@@ -220,7 +220,16 @@ fn into_tx(tx_row: Result<TxRow>) -> Option<Tx> {
 
 fn run_tx(mut state: State, tx: Tx) -> State {
     match state.accounts.get_mut(&tx.client_id) {
-        Some(account) => account.run(&mut state.amounts, tx),
+        Some(account) => {
+            if account.locked {
+                error!(
+                    "Account with client ID `{}` is locked, ignoring tx with ID `{}`",
+                    tx.client_id, tx.tx_id
+                );
+            } else {
+                account.run(&mut state.amounts, tx)
+            }
+        }
         None => {
             let mut account = Account::default();
             let client_id = tx.client_id;
@@ -486,6 +495,39 @@ mod tests {
 
         let tx = Tx {
             tx_type: TxType::Chargeback,
+            client_id: 42,
+            tx_id: 666,
+        };
+        let State {
+            accounts,
+            amounts: _,
+        } = run_tx(state, tx);
+        assert_eq!(
+            accounts.get(&42),
+            Some(&Account {
+                available: BigDecimal::default(),
+                held: BigDecimal::default(),
+                total: BigDecimal::default(),
+                locked: true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_tx_deposit_after_chargeback() {
+        let mut state = State::default();
+        state.accounts.insert(
+            42,
+            Account {
+                available: BigDecimal::default(),
+                held: BigDecimal::default(),
+                total: BigDecimal::default(),
+                locked: true,
+            },
+        );
+
+        let tx = Tx {
+            tx_type: TxType::Deposit(amount_12345()),
             client_id: 42,
             tx_id: 666,
         };

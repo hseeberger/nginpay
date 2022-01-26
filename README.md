@@ -24,7 +24,7 @@ In order to avoid the imprecision of floating point operations nginpay is using 
 
 The actual transaction processing is designed and implemented as a [fold](https://en.wikipedia.org/wiki/Fold_%28higher-order_function%29) over the transaction iterator, thereby making use of several powerful and high-level yet zero-cost abstractions of Rust.
 
-It is assumed, yet not verified, that a resolution transaction can only happen after a dispute. The same is true for a chargeback.
+It is assumed, yet not verified, that a resolution transaction can only happen after a dispute. The same is true for a chargeback. It is further assumed that once an account is locked because of a chargeback transaction, no further transactions can be run on that account.
 
 As the processing of some of the transactions requires backtracking of some former transactions, the fold has to accumulate all deposits and withdrawals. While this is simple to implement and easy to understand, i.e. well suited for this demo, this approach would not work well for real world scenarios with high volume transactions. In such cases only a small cache of recent transactions should – if any – be kept in memory and backtracking of older transactions would have to happen via storage.
 
