@@ -186,26 +186,27 @@ fn main() -> Result<()> {
         amounts: _,
     } = reader
         .deserialize::<TxRow>()
-        .filter_map::<Tx, _>(|row| {
-            match row
-                .context("Cannot read/deserialize tx row")
-                .and_then(|row| {
-                    let tx_id = row.tx_id;
-                    row.try_into()
-                        .context(format!("Cannot convert tx row with ID `{tx_id}` into tx"))
-                }) {
-                Ok(tx) => Some(tx),
-                Err(e) => {
-                    error!("{e}");
-                    None
-                }
-            }
-        })
+        .map(|result| result.context("Cannot read/deserialize tx row"))
+        .filter_map(into_tx)
         .fold(State::default(), run_tx);
 
     print_accounts(accounts);
 
     Ok(())
+}
+
+fn into_tx(tx_row: Result<TxRow>) -> Option<Tx> {
+    match tx_row.and_then(|row| {
+        let tx_id = row.tx_id;
+        row.try_into()
+            .context(format!("Cannot convert tx row with ID `{tx_id}` into tx"))
+    }) {
+        Ok(tx) => Some(tx),
+        Err(e) => {
+            error!("{e}");
+            None
+        }
+    }
 }
 
 fn run_tx(mut state: State, tx: Tx) -> State {
