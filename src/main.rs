@@ -45,7 +45,7 @@ struct Tx {
     tx_id: u32,
 }
 
-/// Possible transaction types. Deposit and Withdrawal have an amount.
+/// Possible domain transaction types. Deposit and Withdrawal have an amount.
 #[derive(Debug, PartialEq)]
 enum TxType {
     Deposit(BigDecimal),
@@ -177,6 +177,14 @@ impl Account {
     }
 }
 
+/// This CLI application reads rows from a CSV file and tries to parse these as domain
+/// transactions. Then it folds over all valid transactions to build client accounts holding the
+/// respective funds.
+///
+/// If the application is not invoked with the expected argument for the path to the CSV file
+/// or if the file does not exist, the application terminates with appropriate error messages.
+/// Invalid rows are logged and ignored, i.e. the application completes normally in the presence
+/// of invalid rows.
 fn main() -> Result<()> {
     env_logger::init();
 
