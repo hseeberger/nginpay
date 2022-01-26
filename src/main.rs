@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Context, Error, Result};
+use bigdecimal::BigDecimal;
 use csv::{ReaderBuilder, Trim};
 use log::error;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::str::FromStr;
 use structopt::StructOpt;
 
 /// Command line options.
@@ -21,7 +23,7 @@ struct TxRow {
     client_id: u16,
     #[serde(rename = "tx")]
     tx_id: u32,
-    amount: Option<f64>,
+    amount: Option<String>,
 }
 
 /// Possible transaction types in the CSV input.
@@ -46,8 +48,8 @@ struct Tx {
 /// Possible transaction types. Deposit and Withdrawal have an amount.
 #[derive(Debug)]
 enum TxType {
-    Deposit(f64),
-    Withdrawal(f64),
+    Deposit(BigDecimal),
+    Withdrawal(BigDecimal),
     Dispute,
     Resolve,
     Chargeback,
@@ -65,19 +67,23 @@ impl TryFrom<TxRow> for Tx {
         } = tx_row;
 
         match (tx_row_type, amount) {
-            (TxRowType::Deposit, Some(amount)) => Ok(Tx {
-                tx_type: TxType::Deposit(amount),
-                client_id,
-                tx_id,
-            }),
+            (TxRowType::Deposit, Some(amount)) => BigDecimal::from_str(&amount)
+                .context("Cannot parse amount as decimal number")
+                .map(|amount| Tx {
+                    tx_type: TxType::Deposit(amount),
+                    client_id,
+                    tx_id,
+                }),
 
             (TxRowType::Deposit, _) => Err(anyhow!("deposit is lacking amount")),
 
-            (TxRowType::Withdrawal, Some(amount)) => Ok(Tx {
-                tx_type: TxType::Withdrawal(amount),
-                client_id,
-                tx_id,
-            }),
+            (TxRowType::Withdrawal, Some(amount)) => BigDecimal::from_str(&amount)
+                .context("Cannot parse amount as decimal number")
+                .map(|amount| Tx {
+                    tx_type: TxType::Withdrawal(amount),
+                    client_id,
+                    tx_id,
+                }),
 
             (TxRowType::Withdrawal, _) => Err(anyhow!("withdrawal is lacking amount")),
 
@@ -110,26 +116,26 @@ struct State {
 
     /// Map from deposit and withdrawal ID to amount.
     /// Used for backtracking when running dispute, resolve and chargeback transactions.
-    amounts: HashMap<u32, f64>,
+    amounts: HashMap<u32, BigDecimal>,
 }
 
 /// A domain account.
 #[derive(Debug, Default)]
 struct Account {
-    available: f64,
-    held: f64,
-    total: f64,
+    available: BigDecimal,
+    held: BigDecimal,
+    total: BigDecimal,
     locked: bool,
 }
 
 impl Account {
-    fn run(&mut self, amounts: &mut HashMap<u32, f64>, tx: Tx) {
+    fn run(&mut self, amounts: &mut HashMap<u32, BigDecimal>, tx: Tx) {
         let tx_id = tx.tx_id;
 
         match tx.tx_type {
             TxType::Deposit(amount) => {
-                self.available += amount;
-                self.total += amount;
+                self.available += &amount;
+                self.total += &amount;
                 amounts.insert(tx_id, amount);
             }
 
@@ -137,8 +143,8 @@ impl Account {
                 if self.available < amount {
                     error!("Insufficient available funds for tx with ID `{tx_id}`");
                 } else {
-                    self.available -= amount;
-                    self.total -= amount;
+                    self.available -= &amount;
+                    self.total -= &amount;
                     amounts.insert(tx_id, -amount);
                 }
             }
